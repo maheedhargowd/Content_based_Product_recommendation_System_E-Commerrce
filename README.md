@@ -10,6 +10,8 @@ The system uses **TF-IDF and cosine similarity** for text-based recommendations 
 ---
 
 ## 📂 Project Structure
+## 📓 Jupyter Notebook
+The data preprocessing and recommendation system analysis is available in [this notebook](notebooks/product_recommendation.ipynb).
 
 ### 📚 `data/` - Dataset & Precomputed Similarity Files
 - `fashion_cleaned.csv` → Preprocessed product data
