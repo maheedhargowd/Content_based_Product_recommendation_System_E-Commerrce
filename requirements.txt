@@ -7,4 +7,5 @@ torch
 transformers
 streamlit
 requests
-
+fuzzywuzzy
+python-Levenshtein
