@@ -1,83 +1,124 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+import os
+import datetime
+import csv
+import uuid
 from fuzzywuzzy import fuzz, process
+from sklearn.feature_extraction.text import TfidfVectorizer
 
+from fashion_ui import show_banner, show_categories, filter_products_by_category
 
+# ✅ Ensure Streamlit Config is First Command
+st.set_page_config(page_title="Fashion Recommendation System", layout="wide")
 
+# ✅ Page Title
+st.title("👗 Welcome to Fashion Products Recommendation Page")
 
-# Load dataset
-df_products = pd.read_csv("data/fashion_cleaned.csv")
+# ✅ Load Product Data and Store in Session State
+if "df_products" not in st.session_state:
+    df_products = pd.read_csv("data/fashion_cleaned.csv")
+    df_products.fillna("", inplace=True)
+    st.session_state.df_products = df_products  # ✅ Store Data in Session State
 
-# Fill missing values
-df_products.fillna("", inplace=True)
+if "selected_category" not in st.session_state:
+    st.session_state.selected_category = None
+if "recommendations" not in st.session_state:
+    st.session_state.recommendations = pd.DataFrame()
 
-# Precompute TF-IDF Matrix for search
-tfidf_vectorizer = TfidfVectorizer(stop_words="english")
-tfidf_matrix = tfidf_vectorizer.fit_transform(df_products["CleanedTitle"])  # Use Cleaned Title for search
+# ✅ Show Banner
+show_banner()
 
+# ✅ Show Category Buttons
+show_categories()
 
-def search_products(query, df_products):
-    """
-    Perform fuzzy matching on product titles and categories to improve search accuracy.
-    """
-    query = query.lower()
+# ✅ Display Recommended Products Based on Category Click
+if st.session_state.selected_category:
+    st.subheader(f"🛍️ {st.session_state.selected_category} Collection")
     
-    # Extract titles and categories
+    if not st.session_state.recommendations.empty:
+        rec_cols = st.columns(3)
+        
+        for r_idx, rec_product in st.session_state.recommendations.iterrows():
+            with rec_cols[r_idx % 3]:
+                if "ImageURL" in rec_product and rec_product["ImageURL"].strip():
+                    st.image(rec_product["ImageURL"], width=200)
+                else:
+                    st.text("🚫 No Image Available")
+
+                st.markdown(f"**{rec_product['ProductTitle']}**")
+                st.text(f"Category: {rec_product['Category']}")
+                st.text(f"Price: ${rec_product.get('Price', 'N/A')}")
+
+    else:
+        st.warning(f"⚠️ No products found for {st.session_state.selected_category}. Try another category.")
+
+
+
+# **TF-IDF Vectorization for search**
+tfidf_vectorizer = TfidfVectorizer(stop_words="english")
+tfidf_matrix = tfidf_vectorizer.fit_transform(st.session_state.df_products["CleanedTitle"])
+
+# **Function to log user interactions**
+def log_user_interaction(user_id, query, clicked_product):
+    """Log user interactions while preventing duplicate logging."""
+    log_file = "data/user_interactions.csv"
+    file_exists = os.path.exists(log_file)
+    
+    with open(log_file, mode="a", newline="", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        if not file_exists:
+            writer.writerow(["timestamp", "user_id", "query", "clicked_product"])
+
+        df_existing = pd.read_csv(log_file, dtype=str) if os.path.exists(log_file) else pd.DataFrame(columns=["timestamp", "user_id", "query", "clicked_product"])
+
+        is_duplicate = (
+            (df_existing["user_id"] == user_id) & 
+            (df_existing["query"] == query) & 
+            (df_existing["clicked_product"] == clicked_product)
+        ).any()
+
+        if not is_duplicate:
+            writer.writerow([
+                datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                user_id,
+                query,
+                clicked_product.replace(",", " ")
+            ])
+
+# **Function to search products based on query**
+def search_products(query):
+    """Perform fuzzy matching on product titles and categories."""
+    query = query.lower()
+    df_products = st.session_state.df_products  # ✅ Use session state data
     choices = df_products["ProductTitle"].astype(str).tolist() + df_products["Category"].astype(str).tolist()
     
-    # Get the best matches
     matches = process.extract(query, choices, limit=10, scorer=fuzz.partial_ratio)
-    
-    # Retrieve matching product details
-    matched_products = []
-    for match, score in matches:
-        if score > 60:  # Adjust this threshold based on testing
-            product = df_products[(df_products["ProductTitle"] == match) | (df_products["Category"] == match)]
-            matched_products.append(product)
+    matched_products = [df_products[(df_products["ProductTitle"] == match[0]) | (df_products["Category"] == match[0])] for match in matches if match[1] > 60]
 
     return pd.concat(matched_products).drop_duplicates() if matched_products else pd.DataFrame()
 
+# ✅ Search Bar
+search_query = st.text_input("🔍 Search for a product, category, or keyword:", placeholder="Try 'men shorts', 'sports shoes', 'girl tops'...")
 
-# Function to handle fuzzy matching
-def fuzzy_search(query):
-    product_titles = df_products["CleanedTitle"].tolist()
-    best_match, confidence = process.extractOne(query, product_titles)
-    
-    if confidence > 75:  # If confidence is high, return the best matching product
-        return df_products[df_products["CleanedTitle"] == best_match].iloc[0]
-    return None
-
-# Streamlit UI
-st.set_page_config(page_title="Fashion Recommendation System", layout="wide")
-
-st.title("🛍️ Fashion Recommendation System")
-st.markdown("**Search for a product, category, or keyword:**")
-
-search_query = st.text_input("Enter product name or keyword:")
-
+search_results = pd.DataFrame()
 if search_query:
-    search_results = search_products(search_query, df_products)
+    search_results = search_products(search_query)
     
     if not search_results.empty:
+        st.subheader(f"Search Results for '{search_query}'")
+        cols = st.columns(3)
 
-        st.subheader(f" Search Results for '{search_query}'")
-        cols = st.columns(3)  # Display results in 3 columns
-        
         for idx, product in search_results.iterrows():
-
-            with cols[idx % 3]:  # Arrange in grid layout
+            with cols[idx % 3]:
                 st.image(product["ImageURL"], width=200)
                 st.markdown(f"**{product['ProductTitle']}**")
                 st.text(f"Category: {product['Category']}")
                 st.text(f"Price: ${product.get('Price', 'N/A')}")
-    
-    else:
-        fuzzy_match = fuzzy_search(search_query)
-        
-        if fuzzy_match is not None:
-            st.warning(f"Did you mean: **{fuzzy_match['ProductTitle']}**?")
-        else:
-            st.error("❌ No matching products found. Try different keywords.")
+
+                button_key = f"view_{idx}_{uuid.uuid4().hex}"
+                if st.button(f"View {product['ProductTitle']}", key=button_key):
+                    log_user_interaction("guest", search_query, product['ProductTitle'])
+                    st.session_state.selected_product = product['ProductTitle']
+                    st.session_state.recommendations = filter_products_by_category(product["Category"])  # ✅ Fetch recommendations
+                    st.rerun()  # ✅ Refresh UI
